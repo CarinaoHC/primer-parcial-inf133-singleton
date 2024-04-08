@@ -1,42 +1,43 @@
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import json, random
+import json
 
 from urllib.parse import urlparse, parse_qs
 
-partidas = []
-
-class PartidasService:
+class Guess:
     _instance = None
-    
+
     def __new__(cls, player):
         if not cls._instance:
             cls._instance = super().__new__(cls)
             cls._instance.player = player
-            cls._instance.number = 0
+            cls._instance.number = 50
             cls._instance.attempts = []
-            cls._instance.status = False
+            cls._instance.status = "En Progreso"
         return cls._instance
     
     def to_dict(self):
-        return {"player": self.player, "number": self.number, "attempts": self.attempts,"status": self.status}
+        return {"player": self.player, "number": self.number, "attempts": self.attempts, "status": self.status}
     
-    def take_damage(self, damage):
-        self.number -= damage
+    def take_player(self, player):
+        self.player = player
         
-    def player_igual(self, number):
-        xnum = random.randint(0, 100)
-        if number == xnum:
-            return "Felicitaciones"
-        elif number > xnum:
-            return "Numero a adivinar es mayor"
-        else:
-            return "Numero a adivinar es menor"
-
+    def player_by_name(self, player):
+        if self.player == player:
+            return player
     
-    def add_partida(data):
-        data["id"] = len(partidas) + 1
-        partidas.append(data)
-        return partidas
+    def player_attempts(self, attempt):
+        self.attemts.append(attempt)
+        
+    def player_status(self):
+        self.status = "Finalizado"
+    
+    def take_partida(self, number):
+        if self.number == number:
+            return "Felicitaciones! Has adivinado elnumero"
+        elif self.number > number:
+            return "El numero a adivinar es mayor"
+        else:
+            return "El numero a adivinar es menor"
 
 class HTTPResponseHandler:
     @staticmethod
@@ -45,94 +46,60 @@ class HTTPResponseHandler:
         handler.send_header("Content-type", "application/json")
         handler.end_headers()
         handler.wfile.write(json.dumps(data).encode("utf-8"))
-
-
-class PlayerHandler(BaseHTTPRequestHandler):
+        
+class GuessHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed_path = urlparse(self.path)
         query_params = parse_qs(parsed_path.query)
-
-        if parsed_path.path == "/partidas":
-            if "nombre" in query_params:
-                nombre = query_params["nombre"][0]
-                partidas_filtrados = PartidasService.filter_partida_by_player(
-                    nombre
-                )
-                if partidas_filtrados != []:
-                    HTTPResponseHandler.handle_response(
-                        self, 200, partidas_filtrados
-                    )
+        
+        if parsed_path.path == "/guess":
+            guess_data = json.dumps(guess.to_dict())
+            HTTPResponseHandler.handle_response(self, 200, guess_data)
+        elif parsed_path.path == "/guess":
+            if "player" in query_params:
+                player = query_params["player"][0]
+                if guess.player_by_name(player):
+                    HTTPResponseHandler.handle_response(self, 200, guess)
                 else:
                     HTTPResponseHandler.handle_response(self, 204, [])
-            else:
-                HTTPResponseHandler.handle_response(self, 200, partidas)
-        elif self.path.startswith("/partidas/"):
-            id = int(self.path.split("/")[-1])
-            partida = PartidasService.find_partida(id)
-            if partida:
-                HTTPResponseHandler.handle_response(self, 200, [partida])
-            else:
-                HTTPResponseHandler.handle_response(self, 204, [])
         else:
-            HTTPResponseHandler.handle_response(
-                self, 404, {"Error": "Ruta no existente"}
-            )
+            HTTPResponseHandler.handle_response(self, 404, [])
 
     def do_POST(self):
         if self.path == "/guess":
-            data = self.read_data()
-            partidas = PartidasService.add_partida(data)
-            HTTPResponseHandler.handle_response(self, 201, partidas)
+            content_length = int(self.headers["Content-Length"])
+            post_data = self.rfile.read(content_length)
+            player = json.loads(post_data.decode("utf-8"))["player"]
+            guess.take_player(player)
+            self.send_response(201)
+            self.end_headers()
+            guess_data = json.dumps(guess.to_dict())
+            self.wfile.write(guess_data.encode("utf-8"))
+        elif self.path == "/guess/damage":
+            content_length = int(self.headers["Content-Length"])
+            post_data = self.rfile.read(content_length)
+            damage = json.loads(post_data.decode("utf-8"))["damage"]
+            guess.take_damage(damage)
+            self.send_response(201)
+            self.end_headers()
+            guess_data = json.dumps(guess.to_dict())
+            self.wfile.write(guess_data.encode("utf-8"))
         else:
-            HTTPResponseHandler.handle_response(
-                self, 404, {"Error": "Ruta no existente"}
-            )
+            self.send_response(404)
+            self.end_headers()
 
-    def do_PUT(self):
-        if self.path.startswith("/partidas/"):
-            id = int(self.path.split("/")[-1])
-            data = self.read_data()
-            partidas = PartidasService.update_partida(id, data)
-            if partidas:
-                HTTPResponseHandler.handle_response(self, 200, partidas)
-            else:
-                HTTPResponseHandler.handle_response(
-                    self, 404, {"Error": "partida no encontrado"}
-                )
-        else:
-            HTTPResponseHandler.handle_response(
-                self, 404, {"Error": "Ruta no existente"}
-            )
+def main():
+    global guess
+    guess = Guess("None")
 
-    def do_DELETE(self):
-        if self.path == "/partidas":
-            partidas = PartidasService.delete_partidas()
-            HTTPResponseHandler.handle_response(self, 200, partidas)
-        else:
-            HTTPResponseHandler.handle_response(
-                self, 404, {"Error": "Ruta no existente"}
-            )
-
-    def read_data(self):
-        content_length = int(self.headers["Content-Length"])
-        data = self.rfile.read(content_length)
-        data = json.loads(data.decode("utf-8"))
-        return data
-
-
-def run_server(port=8000):
-    global player
-    player = PartidasService("Karina")
-    
     try:
-        server_address = ("", port)
-        httpd = HTTPServer(server_address, PlayerHandler)
-        print(f"Iniciando servidor web en http://localhost:{port}/")
+        server_address = ("", 8000)
+        httpd = HTTPServer(server_address, GuessHandler)
+        print("Iniciando servidor HTTP en puerto 8000...")
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("Apagando servidor web")
+        print("Apagando servidor HTTP")
         httpd.socket.close()
 
-
 if __name__ == "__main__":
-    run_server()
+    main()
